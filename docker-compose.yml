@@ -1,8 +1,17 @@
-version: "3.8"
-
 services:
-  db:
-    image: mysql:9.3
+  fastapi_service:
+    build: ./app
+    image: fastapi_image
+    container_name: fastapi_container
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: mysql+pymysql://root:root@db_service:3306/employee_db
+    depends_on:
+      - db_service
+
+  db_service:
+    image: mysql:8.0
     container_name: db_container
     restart: always
     environment:

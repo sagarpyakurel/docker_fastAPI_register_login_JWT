@@ -1,35 +1,19 @@
-from fastapi import FastAPI
-from app.database import engine, Base
-
-# Add DB Session Dependency
+from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.database import SessionLocal
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
 
-# Create Register API
-from fastapi import Depends
-from app import schemas
-from app.models import Employee
-
-from app.auth import hash_password
-
-from app.auth import verify_password
-from app.schemas import EmployeeLogin
-from app.jwt import create_access_token
-
-from fastapi import HTTPException, Header
-from app.jwt import jwt, SECRET_KEY, ALGORITHM
-from jose import JWTError
-
+from database import Base, engine, SessionLocal
+from models import Employee
+import schemas
+from auth import hash_password, verify_password
+from jwt import create_access_token, SECRET_KEY, ALGORITHM
 
 app = FastAPI()
 
-# This creates tables automatically in MySQL
-Base.metadata.create_all(bind=engine)
-
-@app.get("/")
-def home():
-    return {"message": "Employee API is running"}
-
+@app.on_event("startup")
+def startup():
+    Base.metadata.create_all(bind=engine)
 
 def get_db():
     db = SessionLocal()
@@ -38,84 +22,42 @@ def get_db():
     finally:
         db.close()
 
+@app.get("/")
+def home():
+    return {"message": "Employee API is running"}
 
 @app.post("/register")
-def register(employee: schemas.EmployeeCreate,
-             db: Session = Depends(get_db)):
-
+def register(employee: schemas.EmployeeCreate, db: Session = Depends(get_db)):
     new_employee = Employee(
         name=employee.name,
         email=employee.email,
         password=hash_password(employee.password)
     )
-
     db.add(new_employee)
     db.commit()
     db.refresh(new_employee)
-
-    return {
-        "message": "Employee registered",
-        "id": new_employee.id
-    }
-
-
-
-# @app.post("/login")
-# def login(employee: EmployeeLogin, db: Session = Depends(get_db)):
-
-#     user = db.query(Employee).filter(Employee.email == employee.email).first()
-
-#     if not user:
-#         return {"message": "User not found"}
-
-#     if not verify_password(employee.password, user.password):
-#         return {"message": "Incorrect password"}
-
-#     return {
-#         "message": "Login successful",
-#         "user": {
-#             "id": user.id,
-#             "name": user.name,
-#             "email": user.email
-#         }
-#     }
+    return {"message": "Employee registered", "id": new_employee.id}
 
 @app.post("/login")
-def login(employee: EmployeeLogin, db: Session = Depends(get_db)):
-
+def login(employee: schemas.EmployeeLogin, db: Session = Depends(get_db)):
     user = db.query(Employee).filter(Employee.email == employee.email).first()
 
     if not user:
-        return {"message": "User not found"}
+        raise HTTPException(status_code=404, detail="User not found")
 
     if not verify_password(employee.password, user.password):
-        return {"message": "Incorrect password"}
+        raise HTTPException(status_code=400, detail="Incorrect password")
 
     token = create_access_token({"sub": user.email})
+    return {"access_token": token, "token_type": "bearer"}
 
-    return {
-        "access_token": token,
-        "token_type": "bearer"
-    }
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 @app.get("/profile")
-def profile(authorization: str = Header(None)):
-    print("AUTH HEADER:", authorization)
-
-    if not authorization:
-        raise HTTPException(status_code=401, detail="No token")
-
-    parts = authorization.split()
-
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Invalid token format")
-
-    token = parts[1]
-
+def profile(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
-
         return {"message": "Protected data", "email": email}
 
     except JWTError:
